@@ -3223,7 +3223,8 @@
     res2 -= 1;  // LAPACK returns 1-indexed pivots
 ]]
 [[
-  name: qr
+  name: _qr_single
+  cname: qr
   types:
     - Float
     - Double
@@ -3242,7 +3243,8 @@
     - THTensor* self
 ]]
 [[
-  name: geqrf
+  name: _geqrf_single
+  cname: geqrf
   types:
     - Float
     - Double
@@ -3261,7 +3263,8 @@
     - THTensor* self
 ]]
 [[
-  name: orgqr
+  name: _orgqr_single
+  cname: orgqr
   types:
     - Float
     - Double

@@ -539,6 +539,36 @@
 - func: ger_out(Tensor result, Tensor self, Tensor vec2) -> Tensor
   variants: function
 
+- func: qr(Tensor self) -> (Tensor, Tensor)
+
+- func: qr_out(Tensor Q, Tensor R, Tensor self) -> (Tensor, Tensor)
+  variants: function
+
+- func: _qr_helper(Tensor self) -> (Tensor, Tensor)
+  dispatch:
+    CPU: _qr_helper_cpu
+    CUDA: _qr_helper_cuda
+
+- func: geqrf(Tensor self) -> (Tensor, Tensor)
+
+- func: geqrf_out(Tensor Q, Tensor R, Tensor self) -> (Tensor, Tensor)
+  variants: function
+
+- func: _geqrf_helper(Tensor self) -> (Tensor, Tensor)
+  dispatch:
+    CPU: _geqrf_helper_cpu
+    CUDA: _geqrf_helper_cuda
+
+- func: orgqr(Tensor self, Tensor tau) -> Tensor
+
+- func: orgqr_out(Tensor Q, Tensor self, Tensor tau) -> Tensor
+  variants: function
+
+- function: _orgqr_helper(Tensor self, Tensor tau) -> Tensor
+  dispatch:
+    CPU: _orgqr_helper_cpu
+    CUDA: _orgqr_helper_cuda
+
 - func: gesv(Tensor self, Tensor A) -> (Tensor, Tensor)
 
 - func: gesv_out(Tensor solution, Tensor lu, Tensor self, Tensor A) -> (Tensor, Tensor)
