@@ -3278,7 +3278,7 @@
     - arg: THTensor* result
       output: True
     - THTensor* self
-    - THTensor* input2
+    - THTensor* tau
 ]]
 [[
   name: ormqr

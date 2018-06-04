@@ -76,7 +76,7 @@ static void applyGeqrf(Tensor& tau, Tensor& A, std::vector<int64_t> infos) {
   auto batch_size = batchCount(A);
   auto m = A.size(-2);
   auto n = A.size(-1);
-  auto k = std::min(m, n);
+  auto k = std::max(m, n);
   auto lda = m;
 
   auto A_mat_stride = matrixStride(A);
@@ -90,13 +90,12 @@ static void applyGeqrf(Tensor& tau, Tensor& A, std::vector<int64_t> infos) {
     scalar_t* tau_working_ptr = &tau_data[i * k];
     scalar_t wkopt = 0;
 
-    lwork = -1;
     lapackGeqrf<scalar_t>(m, n, A_working_ptr, lda, 
-      tau_working_ptr, &wkopt, &lwork, &info);
+      tau_working_ptr, &wkopt, -1, &info);
     lwork = (int)wkopt;
-    auto work = A.type().toScalarType(kFloat).tensor(lwork);
+    auto work = A.type().toScalarType(kInt).tensor(lwork);
     lapackGeqrf<scalar_t>(m, n, A_working_ptr, lda, 
-      tau_working_ptr, work.data<scalar_t>(), &lwork, &info);
+      tau_working_ptr, work.data<scalar_t>(), lwork, &info);
 
     infos[i] = info;
     if (info != 0) {
@@ -106,14 +105,14 @@ static void applyGeqrf(Tensor& tau, Tensor& A, std::vector<int64_t> infos) {
 }
 
 template <typename scalar_t>
-static void applyOrgqr(Tensor& A, const Tensor& tau, std::vector<int64_t> infos) {
+static void applyOrgqr(Tensor& A, Tensor& tau, std::vector<int64_t> infos) {
 #ifndef USE_LAPACK
   AT_ERROR("orgqr: LAPACK library not found in compilation");
 #endif  
   auto batch_size = batchCount(A);
   auto m = A.size(-2);
   auto n = A.size(-1);
-  auto k = std::min(m, n);
+  auto k = std::max(m, n);
   auto lda = m;
 
   auto A_mat_stride = matrixStride(A);
@@ -127,13 +126,12 @@ static void applyOrgqr(Tensor& A, const Tensor& tau, std::vector<int64_t> infos)
     scalar_t* tau_working_ptr = &tau_data[i * k];
     scalar_t wkopt = 0;
 
-    lwork = -1;
-    lapackOrgqr<scalar_t>(m, k, k, A_working_ptr, lda, 
-      tau_working_ptr, &wkopt, &lwork, &info);
+    lapackOrgqr<scalar_t>(m, n, k, A_working_ptr, lda, 
+      tau_working_ptr, &wkopt, -1, &info);
     lwork = (int)wkopt;
-    auto work = A.type().toScalarType(kFloat).tensor(lwork);
-    lapackOrgqr<scalar_t>(m, k, k, A_working_ptr, lda, 
-      tau_working_ptr, work.data<scalar_t>(), &lwork, &info);
+    auto work = A.type().toScalarType(kInt).tensor(lwork);
+    lapackOrgqr<scalar_t>(m, n, k, A_working_ptr, lda, 
+      tau_working_ptr, work.data<scalar_t>(), lwork, &info);
 
     infos[i] = info;
     if (info != 0) {
@@ -143,9 +141,10 @@ static void applyOrgqr(Tensor& A, const Tensor& tau, std::vector<int64_t> infos)
 }
 
 std::tuple<Tensor,Tensor> _qr_helper_cpu(const Tensor& A) {
-  Tensor R, tau;
-  std::tie(R, tau) = _geqrf_helper_cpu(A);
-  Tensor Q = _orgqr_helper_cpu(R, tau);
+  std::tuple<Tensor,Tensor> geqrf_result_tuple = _geqrf_helper_cpu(A);
+  Tensor R = std::get<0>(geqrf_result_tuple);
+  Tensor tau = std::get<1>(geqrf_result_tuple);
+  Tensor Q = _orgqr_helper_cpu(A, tau);
   // Tensor R.triu().reshape();
   // R.masked_fill_(mask, 0);
   return std::tuple<Tensor,Tensor>(Q, R);
@@ -153,17 +152,13 @@ std::tuple<Tensor,Tensor> _qr_helper_cpu(const Tensor& A) {
 
 std::tuple<Tensor,Tensor> _geqrf_helper_cpu(const Tensor& A) {
   std::vector<int64_t> infos(batchCount(A), 0);
-  auto k = std::min(A.size(-1), A.size(-2));
-  std::vector<int64_t> tau_sizes(A.sizes().vec());
-  
-  tau_sizes.pop_back();
-  tau_sizes.pop_back();
+  auto k = std::max(A.size(-1), A.size(-2));
+  IntList tau_sizes = std::vector<int64_t>(A.size().begin(), A.dim() - 2);
   tau_sizes.push_back(k);
 
-
-  auto A_working_copy = cloneBatchedColumnMajor(A);
-  auto tau = A.type().toScalarType(kFloat).tensor(tau_sizes);
-  AT_DISPATCH_FLOATING_TYPES(A.type(), "geqrf", [&]{
+  auto A_woring_copy = cloneBatchedColumnMajor(A);
+  auto tau = A.type().toScalarType(kInt).tensor(tau_size);
+  AT_DISPATCH_FLOATING_TYPES(self.type(), "geqrf", [&]{
     applyGeqrf<scalar_t>(tau, A_working_copy, infos);
   });
   checkErrors(infos);
@@ -175,7 +170,7 @@ Tensor _orgqr_helper_cpu(const Tensor& A, const Tensor& tau) {
   std::vector<int64_t> infos(batchCount(A), 0);  
 
   auto A_working_copy = cloneBatchedColumnMajor(A);
-  AT_DISPATCH_FLOATING_TYPES(A.type(), "orgqr", [&]{
+  AT_DISPATCH_FLOATING_TYPES(self.type(), "orgqr", [&]{
     applyOrgqr<scalar_t>(A_working_copy, tau, infos);
   });
   checkErrors(infos);
@@ -220,7 +215,7 @@ Tensor orgqr(const Tensor& A, const Tensor& tau) {
   if (A.dim() <= 2) {
     return at::_orgqr_single(A, tau);
   }
-  return A.type()._orgqr_helper(A, tau);
+  return self.type()._orgqr_helper();
 }
 
 Tensor& orgqr_out(Tensor&Q, const Tensor& A, const Tensor& tau) {

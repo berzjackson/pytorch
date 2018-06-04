@@ -29,8 +29,8 @@ void magmaGeqrfBatched(
 
 template<class scalar_t>
 void magmaOrgqr(
-  magma_int_t m, magma_int_t n, mamga_int_t k, scalar_t* dA,
-  magma_int_t ldda, scalar_t* tau, magma_int_t info) {
+  magma_int_t m, magma_int_t n, magma_int_t k, scalar_t* dA,
+  magma_int_t ldda, scalar_t* tau, magma_int_t* info) {
     AT_ERROR("orgqr only takes float or double Tensors");
 }
 
@@ -59,7 +59,7 @@ void magmaGeqrfBatched<double>(
     magma_dgeqrf_batched_smallsq(
       n, dA_array, ldda, tau_array, info_array, batch_count, queue);
   } else {
-    magma_deqrf_batched(
+    magma_dgeqrf_batched(
       m, n, dA_array, ldda, tau_array, info_array, batch_count, queue);
   }
 }
@@ -67,17 +67,15 @@ void magmaGeqrfBatched<double>(
 template<>
 void magmaOrgqr<float>(
     magma_int_t m, magma_int_t n, magma_int_t k, float* dA, 
-    magma_int_t ldda, float* tau, magma_int_t info) {
+    magma_int_t ldda, float* tau, magma_int_t* info) {
         magma_sorgqr2(m, n, k, dA, ldda, tau, info);
-    }
 }
 
 template<>
 void magmaOrgqr<double>(
-    magma_int_t m, magma_int_t n, magma_int_t l double* dA,
-    magma_int_t ldda, double* tau, magma_int_t info) {
+    magma_int_t m, magma_int_t n, magma_int_t k, double* dA,
+    magma_int_t ldda, double* tau, magma_int_t* info) {
         magma_dorgqr2(m, n, k, dA, ldda, tau, info);
-    }
 }
 
 #endif
@@ -98,7 +96,7 @@ static inline std::unique_ptr<Storage> pin_memory(int64_t size, Tensor dummy) {
 
 
 template <typename scalar_t>
-static void applyGeqrf(Tensor& tau, Tensor& A, std:vector<int64_t> infos) {
+static void applyGeqrf(Tensor& tau, Tensor& A, std::vector<int64_t> infos) {
 #ifndef USE_MAGMA
 AT_ERROR("geqrf: MAGMA library not found in "
     "compilation. Please rebuild with MAGMA.");
@@ -106,11 +104,14 @@ AT_ERROR("geqrf: MAGMA library not found in "
     magma_int_t batch_size = magma_int_cast(batchCount(A), "batchCount");
     magma_int_t m = magma_int_cast(A.size(-2), "A.size(-2)");
     magma_int_t n = magma_int_cast(A.size(-1), "A.size(-1)");
-    magma_int_t k = magma_int_cast(m < n ? m : n, "min(A.size(-2), A.size(-1))");
+    magma_int_t k = magma_int_cast(std::min(m, n), "min(A.size(-2), A.size(-1))");
     magma_int_t* info_array;
+    scalar_t** A_array;
+    scalar_t** tau_array;
+    scalar_t* tau_data;
  
     auto A_mat_stride = matrixStride(A);
-    auto A_data = A.data<scalar_t>()
+    auto A_data = A.data<scalar_t>();
 
     ALLOCATE_ARRAY(A_array, scalar_t*, batch_size, A);
     ALLOCATE_ARRAY(tau_array, scalar_t*, batch_size, A);
@@ -124,15 +125,15 @@ AT_ERROR("geqrf: MAGMA library not found in "
     }
 
     magmaGeqrfBatched<scalar_t>(
-        m, n, A, m, tau_array, info_array, batch_count, createMagmaQueue(A));
-    for (int64_t i = 0; i < bathc_count; i++) {
+        m, n, A_array, m, tau_array, info_array, batch_size, createMagmaQueue(A));
+    for (int64_t i = 0; i < batch_size; i++) {
         infos[i] = info_array[i];
     }
 #endif
 }
 
 template <typename scalar_t>
-static void applyOrgqr(Tensor& A, Tensor& tau, std:vector<int64_t> infos) {
+static void applyOrgqr(Tensor& A, const Tensor& tau, std::vector<int64_t> infos) {
 #ifndef USE_MAGMA
 AT_ERROR("orgqr: MAGMA library not found in "
     "compilation. Please rebuild with MAGMA.");
@@ -140,25 +141,26 @@ AT_ERROR("orgqr: MAGMA library not found in "
     magma_int_t batch_size = magma_int_cast(batchCount(A), "batchCount");
     magma_int_t m = magma_int_cast(A.size(-2), "A.size(-2)");
     magma_int_t n = magma_int_cast(A.size(-1), "A.size(-1)");
-    magma_int_t k = magma_int_cast(m < n ? m : n, "min(A.size(-2), A.size(-1))");
+    magma_int_t k = magma_int_cast(std::min(m, n), "min(A.size(-2), A.size(-1))");
     magma_int_t lda = m;
     magma_int_t* info_array;
  
     auto A_mat_stride = matrixStride(A);
-    auto A_data = A.data<scalar_t>()
+    auto A_data = A.data<scalar_t>();
     auto tau_data = tau.data<scalar_t>();
 
     ALLOCATE_ARRAY(info_array, magma_int_t, batch_size, A);
-
     // batched orgqr missing in Magma, use naive for loop instead
     for (int64_t i = 0; i < batch_size; i++) {
         scalar_t* A_working_ptr = &A_data[i * A_mat_stride];
-        scalar_t* tau_worling_ptr = &tau_data[i * k];
+        scalar_t* tau_working_ptr = &tau_data[i * k];
+        std::cout<<"Before\n"<<m<<","<<n<<","<<k<<","<<lda<<"\n";
         magmaOrgqr<scalar_t>(
-            m, n, k, A_working_ptr, lda, tau_working_ptr, info_array[i]);
+            m, k, k, A_working_ptr, lda, tau_working_ptr, &info_array[i]);
+        std::cout<<"After\n";
     }
 
-    for (int64_t i = 0; i < bathc_count; i++) {
+    for (int64_t i = 0; i < batch_size; i++) {
         infos[i] = info_array[i];
     }
 #endif
@@ -166,24 +168,26 @@ AT_ERROR("orgqr: MAGMA library not found in "
 
 
 std::tuple<Tensor,Tensor> _qr_helper_cuda(const Tensor& A) {
-  std::tuple<Tensor,Tensor> geqrf_result_tuple = _geqrf_helper_cuda(A);
-  Tensor R = std::get<0>(geqrf_result_tuple);
-  Tensor tau = std::get<1>(geqrf_result_tuple);
-  Tensor Q = _orgqr_helper_cuda(A, tau);
-  Tensor R.triu().reshape();
-  R.masked_fill_(mask, 0);
+  Tensor R, tau;
+  std::tie(R, tau) = _geqrf_helper_cuda(A);
+  Tensor Q = _orgqr_helper_cuda(R, tau);
+  // Tensor R.triu().reshape();
+  // R.masked_fill_(mask, 0);
   return std::tuple<Tensor,Tensor>(Q, R);
 }
   
 std::tuple<Tensor,Tensor> _geqrf_helper_cuda(const Tensor& A) {
   std::vector<int64_t> infos(batchCount(A), 0);
-  auto k = std::max(A.size(-1), A.size(-2));
-  IntList tau_sizes = std::vector<int64_t>(A.size().end(), A.dim() - 2);
+  auto k = std::min(A.size(-1), A.size(-2));
+  std::vector<int64_t> tau_sizes(A.sizes().vec());
+  tau_sizes.pop_back();
+  tau_sizes.pop_back();
   tau_sizes.push_back(k);
 
-  auto A_woring_copy = cloneBatchedColumnMajor(A);
-  auto tau = A.type().toScarlarType(kInt).tensor(tau_size);
-  AT_DISPATCH_FLOATING_TYPES(self.type(), "geqrf", [&]{
+  auto A_working_copy = cloneBatchedColumnMajor(A);
+  auto tau = A.type().toScalarType(kFloat).tensor(tau_sizes);
+
+  AT_DISPATCH_FLOATING_TYPES(A.type(), "geqrf", [&]{
     applyGeqrf<scalar_t>(tau, A_working_copy, infos);
   });
   checkErrors(infos);
@@ -195,7 +199,7 @@ Tensor _orgqr_helper_cuda(const Tensor& A, const Tensor& tau) {
   std::vector<int64_t> infos(batchCount(A), 0);  
 
   auto A_working_copy = cloneBatchedColumnMajor(A);
-  AT_DISPATCH_FLOATING_TYPES(self.type(), "orgqr", [&]{
+  AT_DISPATCH_FLOATING_TYPES(A.type(), "orgqr", [&]{
     applyOrgqr<scalar_t>(A_working_copy, tau, infos);
   });
   checkErrors(infos);

@@ -564,7 +564,7 @@
 - func: orgqr_out(Tensor Q, Tensor self, Tensor tau) -> Tensor
   variants: function
 
-- function: _orgqr_helper(Tensor self, Tensor tau) -> Tensor
+- func: _orgqr_helper(Tensor self, Tensor tau) -> Tensor
   dispatch:
     CPU: _orgqr_helper_cpu
     CUDA: _orgqr_helper_cuda
